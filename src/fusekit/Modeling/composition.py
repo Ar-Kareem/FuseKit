@@ -1,5 +1,6 @@
 import math
 import warnings
+import copy
 
 from torch import Tensor
 from typing import Dict, Callable, Any
@@ -159,10 +160,17 @@ class LogitComposition(Composition):
         def forward(model: PeftMixedModel, *args, **kwargs):
             adapters = model.active_adapters()
             outs = []
-            for adapter in adapters:
+            template_past = None
+            if kwargs.get("past_key_values") is not None:
+                # KV cache objects are mutable; reusing them across adapter calls
+                # corrupts attention shapes during generation.
+                template_past = copy.deepcopy(kwargs["past_key_values"])
+            for idx, adapter in enumerate(adapters):
                 model.set_adapter(adapter)
-                outs.append(model._orig_forward(*args, **kwargs))
-
+                adapter_kwargs = dict(kwargs)
+                if idx > 0 and template_past is not None:
+                    adapter_kwargs["past_key_values"] = copy.deepcopy(template_past)
+                outs.append(model._orig_forward(*args, **adapter_kwargs))
             model.set_adapter(adapters)
 
             logits = [o.logits for o in outs]
