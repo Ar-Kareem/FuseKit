@@ -6,6 +6,10 @@ import yaml
 HOME = Path.home()
 CWD  = Path.cwd()
 DEFAULT_ROOT = CWD / "fusekit_data"
+DEFAULT_MODELS = "/storage/cmarnold/models"
+
+# Provide a default models location when FUSEKIT_MODELS is unset.
+os.environ.setdefault("FUSEKIT_MODELS", DEFAULT_MODELS)
 
 # Environment variable override
 ROOT = Path(os.getenv("FUSEKIT_ROOT", DEFAULT_ROOT))
@@ -102,4 +106,3 @@ ModelPath = _ModelPath()
 
 class DatasetPath:
     commonsenseqa = DEFAULT_DATASETS_DIR / 'CommonsenseQA'
-
