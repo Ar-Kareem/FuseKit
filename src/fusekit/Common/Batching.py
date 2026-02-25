@@ -167,6 +167,43 @@ class DynamicBatchLoader(object):
     def __len__(self):
         return len(self.dataset)
 
+    def _active_adapter_count(self) -> int:
+        """
+        Best-effort adapter count from the underlying model.
+        Falls back to configured num_adapters when unavailable.
+        """
+        try:
+            if hasattr(self.model, "active_adapters"):
+                active = self.model.active_adapters()
+                if isinstance(active, str):
+                    return 1
+                if active is None:
+                    return 1
+                return max(1, len(active))
+        except Exception:
+            pass
+        return max(1, int(self.num_adapters))
+
+    def _uses_logit_composition(self) -> bool:
+        """
+        Logit composition patches model.forward and keeps model._orig_forward.
+        """
+        try:
+            orig_forward = getattr(self.model, "_orig_forward", None)
+            cur_forward = getattr(self.model, "forward", None)
+            return (orig_forward is not None) and (cur_forward is not None) and (cur_forward is not orig_forward)
+        except Exception:
+            return False
+
+    def _adapter_memory_factor(self) -> int:
+        """
+        Only logit composition performs a full forward per adapter, so KV-cache
+        and activation-like memory should scale with active adapters in that case.
+        """
+        if self._uses_logit_composition():
+            return self._active_adapter_count()
+        return max(1, int(self.num_adapters))
+
     def batch_full(self, next_sample_size) -> bool:
         if next_sample_size > self.mm.get_unallocated_memory():
             return True
@@ -181,8 +218,10 @@ class DynamicBatchLoader(object):
         #self.batch_memory = 0
         batch_dims = BatchDimensions()
         max_new_tokens = 0
+        adapter_factor = self._adapter_memory_factor()
         if VERBOSE:
             print(f'Unallocated Memory: {self.mm.get_unallocated_memory()} MB')
+            print(f'Adapter Memory Factor: {adapter_factor}')
         for sample in self.dataset:
             inputs = sample.get_inputs()
             assert inputs.dim() == 2, (
@@ -207,18 +246,20 @@ class DynamicBatchLoader(object):
                     T = input_len
 
                     sample_size = self.mm.required_train_memory(1, T)
-                    new_batch_size = self.mm.required_train_memory(B, T) * self.num_adapters
+                    new_batch_size = self.mm.required_train_memory(B, T) * adapter_factor
                 else:
                     sample_size = self.mm.required_memory(temp)
                     batch_dims.merge(temp)
-                    new_batch_size = self.mm.required_memory(batch_dims) * self.num_adapters
-                
+                    new_batch_size = self.mm.required_memory(batch_dims) * adapter_factor
+
                 if VERBOSE:
                     print(f'Sample Size: {sample_size:.2f} MB')
                 assert sample_size <= self.mm.get_unallocated_memory(), (
                     f'Unallocated CUDA memory of size {self.mm.get_unallocated_memory()} MB '
                     f'is too small for Sample of length {input_len} tokens (required space: {sample_size} MB)'
                 )
+                if sample_size * adapter_factor > self.mm.get_unallocated_memory():
+                    print(f'Unallocated CUDA memory of size {self.mm.get_unallocated_memory()} MB might be too small for Sample of length {input_len} tokens (recommended space: {sample_size * adapter_factor} MB)')
 
                 if not self.batch_full(new_batch_size):
                     self.samples.append((sample, subsample_idx))
