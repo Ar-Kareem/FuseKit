@@ -162,9 +162,26 @@ class LogitComposition(Composition):
             cache_attr = "_logit_composition_past_key_values"
             incoming_past = kwargs.get("past_key_values")
             stored_past = getattr(model, cache_attr, None)
+            cache_position = kwargs.get("cache_position")
+
+            cache_starts_at_zero = False
+            if cache_position is not None:
+                try:
+                    if torch.is_tensor(cache_position):
+                        if cache_position.numel() > 0:
+                            cache_starts_at_zero = int(cache_position.reshape(-1)[0].item()) == 0
+                    elif isinstance(cache_position, (list, tuple)):
+                        if len(cache_position) > 0:
+                            cache_starts_at_zero = int(cache_position[0]) == 0
+                    else:
+                        cache_starts_at_zero = int(cache_position) == 0
+                except Exception:
+                    cache_starts_at_zero = False
+
+            is_new_generation = incoming_past is None or cache_starts_at_zero
 
             # Keep one KV-cache trajectory per adapter across generation steps.
-            if incoming_past is None:
+            if is_new_generation:
                 adapter_pasts = {adapter: None for adapter in adapters}
                 if hasattr(model, cache_attr):
                     delattr(model, cache_attr)
