@@ -313,6 +313,8 @@ class CausalModel(TrainingMixin, CausalModelBase):
 
         if hasattr(self.model, "_orig_forward"):
             self.model.forward = self.model._orig_forward
+        if hasattr(self.model, "_logit_composition_past_key_values"):
+            delattr(self.model, "_logit_composition_past_key_values")
 
         # --- Load reference config from first adapter dir ---
         ref_cfg = LoraConfig.from_pretrained(lora_checkpoints[0])

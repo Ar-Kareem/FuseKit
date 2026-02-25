@@ -154,28 +154,74 @@ class AdapterSoup(WeightComposition):
         B_out = torch.nn.functional.linear(A_out, B_bar)
 
         return result + B_out * s_bar
-    
+
 class LogitComposition(Composition):
     def make_forward(self) -> Callable:
         def forward(model: PeftMixedModel, *args, **kwargs):
-            adapters = model.active_adapters()
+            adapters = list(model.active_adapters())
+            cache_attr = "_logit_composition_past_key_values"
+            incoming_past = kwargs.get("past_key_values")
+            stored_past = getattr(model, cache_attr, None)
+
+            # Keep one KV-cache trajectory per adapter across generation steps.
+            if incoming_past is None:
+                adapter_pasts = {adapter: None for adapter in adapters}
+                if hasattr(model, cache_attr):
+                    delattr(model, cache_attr)
+            elif (
+                isinstance(incoming_past, dict)
+                and all(adapter in incoming_past for adapter in adapters)
+            ):
+                adapter_pasts = {
+                    adapter: incoming_past.get(adapter) for adapter in adapters
+                }
+            elif (
+                isinstance(stored_past, dict)
+                and all(adapter in stored_past for adapter in adapters)
+            ):
+                adapter_pasts = {
+                    adapter: stored_past.get(adapter) for adapter in adapters
+                }
+            else:
+                adapter_pasts = {}
+                for idx, adapter in enumerate(adapters):
+                    if idx == 0:
+                        adapter_pasts[adapter] = incoming_past
+                    else:
+                        # Bootstrapping from a single cache requires deep copies,
+                        # otherwise adapters share mutable KV state.
+                        adapter_pasts[adapter] = copy.deepcopy(incoming_past)
+
             outs = []
-            template_past = None
-            if kwargs.get("past_key_values") is not None:
-                # KV cache objects are mutable; reusing them across adapter calls
-                # corrupts attention shapes during generation.
-                template_past = copy.deepcopy(kwargs["past_key_values"])
-            for idx, adapter in enumerate(adapters):
+            next_adapter_pasts = {}
+            for adapter in adapters:
                 model.set_adapter(adapter)
                 adapter_kwargs = dict(kwargs)
-                if idx > 0 and template_past is not None:
-                    adapter_kwargs["past_key_values"] = copy.deepcopy(template_past)
-                outs.append(model._orig_forward(*args, **adapter_kwargs))
+                adapter_past = adapter_pasts.get(adapter)
+                if adapter_past is None:
+                    adapter_kwargs.pop("past_key_values", None)
+                else:
+                    adapter_kwargs["past_key_values"] = adapter_past
+
+                out = model._orig_forward(*args, **adapter_kwargs)
+                outs.append(out)
+                next_adapter_pasts[adapter] = getattr(out, "past_key_values", None)
+
             model.set_adapter(adapters)
 
-            logits = [o.logits for o in outs]
             base_out = outs[0]
-            base_out.logits = self(logits)  
+            base_out.logits = self([o.logits for o in outs])
+
+            if kwargs.get("use_cache", True):
+                if any(past is not None for past in next_adapter_pasts.values()):
+                    setattr(model, cache_attr, next_adapter_pasts)
+                    # Keep HF generate() happy: it still expects a standard cache.
+                    base_out.past_key_values = next_adapter_pasts.get(adapters[0])
+                elif hasattr(model, cache_attr):
+                    delattr(model, cache_attr)
+            elif hasattr(model, cache_attr):
+                delattr(model, cache_attr)
+
             return base_out
         return forward     
 
@@ -190,8 +236,9 @@ class LogitSum(LogitComposition):
     
 class LogitMax(LogitComposition):
     def __call__(self, logits: list):
-        acc = logits[0].clone()
+        acc = logits[0][:, [-1], :].clone()
         for t in logits[1:]:
+            t = t[:, [-1], :]
             torch.maximum(acc, t, out=acc)
         return acc
     
