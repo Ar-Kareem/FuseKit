@@ -90,6 +90,7 @@ class MMLUDataset(IterableDataset):
         super().__init__()
         assert split != 'dev' or num_shots == 0, "MMLU dev split cannot have shots"
         assert num_shots <= 5, "MMLU cannot have more than 5 shots"
+        self.name = 'MMLU_' + subject.name
         self.type = EvalType.SIMILARITY
         self.subject = subject
         path, name = subject.value
@@ -115,7 +116,7 @@ class MMLUDataset(IterableDataset):
         choices = sample['choices']
         assert len(choices) == 4, "MMLU choices should have length 4"
         options_str = "\n".join(f"{letters[j]}. {choices[j]}" for j in range(4))
-        text = f"{sample['question']}\n\nOptions:\n{options_str}\nAnswer:"
+        text = f"{sample['question']}\n\nOptions:\n{options_str}"
         label_letter = letters[int(sample['answer'])]
         return text, label_letter
 
@@ -135,8 +136,12 @@ class MMLUSample(GenerationSample):
 
     def get_labels(self) -> torch.Tensor:
         if self.labels is None:
-            text_with_label = self.get_text() + ' ' + self.answer
-            labels = self.tokenizer.encode(text_with_label)
+            # Return answer-only labels so training_inputs (prompt + labels)
+            # does not duplicate the prompt.
+            labels = self.tokenizer.encode(
+                ' ' + self.answer,
+                add_special_tokens=False
+            )
             self.labels = torch.tensor(labels, dtype=torch.long).unsqueeze(0)
         return self.labels
     
