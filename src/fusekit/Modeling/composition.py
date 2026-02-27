@@ -155,6 +155,64 @@ class AdapterSoup(WeightComposition):
 
         return result + B_out * s_bar
 
+class AdapterSoupTrue(WeightComposition):
+    """
+    True AdapterSoup in weight space for LoRA adapters:
+      W_soup = W_base + sum_i w_i * DeltaW_i
+    At forward time this is equivalent to summing each adapter delta with the
+    same coefficients w_i.
+    """
+    def __init__(self, weights: Dict[str, float] | None = None, normalize=True):
+        self.weights = {} if weights is None else dict(weights)
+        self.normalize = normalize
+
+    def _resolve_weights(self, adapters):
+        if not adapters:
+            return {}
+
+        if not self.weights:
+            uniform = 1.0 / len(adapters)
+            return {adapter: uniform for adapter in adapters}
+
+        resolved = {
+            adapter: float(self.weights.get(adapter, 0.0))
+            for adapter in adapters
+        }
+        total = sum(resolved.values())
+
+        if self.normalize:
+            if total == 0.0:
+                uniform = 1.0 / len(adapters)
+                return {adapter: uniform for adapter in adapters}
+            return {adapter: weight / total for adapter, weight in resolved.items()}
+
+        return resolved
+
+    def __call__(self, layer: LoraLayer, base_out: Tensor, x: Tensor):
+        result = base_out
+        adapters = [
+            adapter for adapter in layer.active_adapters
+            if (adapter in layer.lora_A) and (adapter in layer.lora_B)
+        ]
+        if not adapters:
+            return result
+
+        adapter_weights = self._resolve_weights(adapters)
+        for adapter in adapters:
+            weight = adapter_weights.get(adapter, 0.0)
+            if weight == 0.0:
+                continue
+
+            lora_A = layer.lora_A[adapter]
+            lora_B = layer.lora_B[adapter]
+            dropout = layer.lora_dropout[adapter]
+            scaling = layer.scaling[adapter] * weight
+
+            x_cast = layer._cast_input_dtype(x, lora_A.weight.dtype).contiguous()
+            result = result + lora_B(lora_A(dropout(x_cast))) * scaling
+
+        return result
+
 class LogitComposition(Composition):
     def make_forward(self) -> Callable:
         def forward(model: PeftMixedModel, *args, **kwargs):

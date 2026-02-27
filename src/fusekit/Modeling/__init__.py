@@ -7,7 +7,7 @@ from .pixtral import GenericPixtral, Pixtral_12b
 from .qwen2 import GenericQwen2, Qwen2_2b, Qwen2_7b
 from .phi3 import GenericPhi3, Phi3p5_Vision
 
-from .composition import Composition, WeightComposition, PEMAddition, LoraHub, AdapterSoup, AverageOfDeltas, SumOfDeltas
+from .composition import Composition, WeightComposition, PEMAddition, LoraHub, AdapterSoup, AdapterSoupTrue, AverageOfDeltas, SumOfDeltas
 from .composition import LogitComposition, LogitMax, LogitSum, LogitMean
 from .model_hooks import GenericModelHook, HookWrapper, InputsToHook
 
@@ -30,4 +30,3 @@ __all__ = [
     "GenericClaude", "Claude3p5_Sonnet", "Claude3p5_Haiku", "Claude3p7_Sonnet", "Claude3_Opus", "Claude3_Sonnet", "Claude3_Haiku", "Claude4_Opus", "Claude4_Sonnet",
     "GenericGemini", "Gemini1p5_Pro", "Gemini1p5_Flash_8B", "Gemini1p5_Flash", "Gemini2_Flash", "Gemini2p5_Pro", "Gemini2p5_Flash", "Gemini2p5_Flash_Lite", "Gemini2_Flash_Lite"
 ]
-
