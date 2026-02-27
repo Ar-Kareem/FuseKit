@@ -395,6 +395,8 @@ class MemoryManager:
 
     def required_train_memory(self, B, T):
         cfg = self.model.config
+        if 'num_hidden_layers' not in cfg and 'text_config' in cfg:
+            cfg = cfg.text_config
         L   = getattr(cfg, 'num_hidden_layers', None) or cfg.num_hidden_layers
         H   = getattr(cfg, 'hidden_size', None) or cfg.hidden_size
         I   = getattr(cfg, 'intermediate_size', None) or 4 * H  # common FFN width
