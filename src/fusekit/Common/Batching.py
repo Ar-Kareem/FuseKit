@@ -217,6 +217,7 @@ class DynamicBatchLoader(object):
         self.samples: list[GenericSample] = []
         #self.batch_memory = 0
         batch_dims = BatchDimensions()
+        max_train_input_len = 0
         max_new_tokens = 0
         adapter_factor = self._adapter_memory_factor()
         if VERBOSE:
@@ -242,10 +243,9 @@ class DynamicBatchLoader(object):
                         temp.add_tensor(key, TensorDimensions(list(tensor.shape)))
 
                 if self.training:
-                    B = len(self.samples)
-                    T = input_len
-
-                    sample_size = self.mm.required_train_memory(1, T)
+                    B = len(self.samples) + 1
+                    T = max(max_train_input_len, input_len)
+                    sample_size = self.mm.required_train_memory(1, input_len)
                     new_batch_size = self.mm.required_train_memory(B, T) * adapter_factor
                 else:
                     sample_size = self.mm.required_memory(temp)
@@ -263,6 +263,8 @@ class DynamicBatchLoader(object):
 
                 if not self.batch_full(new_batch_size):
                     self.samples.append((sample, subsample_idx))
+                    if self.training:
+                        max_train_input_len = max(max_train_input_len, input_len)
                 else:
                     if VERBOSE:
                         print(f'Batch Memory Required: {new_batch_size:.2f} MB')
@@ -270,6 +272,8 @@ class DynamicBatchLoader(object):
                     self.samples = [(sample, subsample_idx)]
                     batch_dims = BatchDimensions()
                     max_new_tokens = sample.max_new_tokens
+                    if self.training:
+                        max_train_input_len = input_len
 
                 # print(f'Batch needs : {new_batch_size}MB')
                 # Some models do not support multimodal batching
@@ -279,6 +283,7 @@ class DynamicBatchLoader(object):
                     yield BatchSamples(self.samples, max_new_tokens=max_new_tokens)
                     self.samples: list[GenericSample] = []
                     batch_dims = BatchDimensions()
+                    max_train_input_len = 0
                     max_new_tokens = 0
         if self.samples:
             #print(f'Batch Memory Required: {self.batch_size:.2f} MB')
