@@ -100,7 +100,10 @@ class MMLUDataset(IterableDataset):
         self.all_targets = set(label_letter for _, label_letter in self.dataset)
         if num_shots > 0:
             self.shots_dataset = [self.parse_sample(sample) for sample in load_dataset(path=path, name=name, split='dev')]
-            self.shots_dataset = [f'{text} {label_letter}' for text, label_letter in self.shots_dataset]
+            self.shots_dataset = [
+                f'Prompt: {text}\nAnswer: {label_letter}'
+                for text, label_letter in self.shots_dataset
+            ]
         self.samples: list[MMLUSample] = []
         seeder = random.Random(seed)
         for i, (text, label_letter) in enumerate(self.dataset):
@@ -136,12 +139,13 @@ class MMLUSample(GenerationSample):
 
     def get_labels(self) -> torch.Tensor:
         if self.labels is None:
-            # Return answer-only labels so training_inputs (prompt + labels)
-            # does not duplicate the prompt.
             labels = self.tokenizer.encode(
-                ' ' + self.answer,
+                self.answer,
                 add_special_tokens=False
             )
+            eos_token_id = self.tokenizer.eos_token_id
+            if eos_token_id is not None:
+                labels.append(eos_token_id)
             self.labels = torch.tensor(labels, dtype=torch.long).unsqueeze(0)
         return self.labels
     
@@ -153,8 +157,8 @@ class MMLUSample(GenerationSample):
         predicted = split_alnum_and_lower(self.pred_text)
         for i in range(len(predicted)-1, -1, -1):
             if predicted[i] in self.all_targets:
-                return {"Accuracy": 1.0 if predicted[i] == gold else 0.0}
-        return {"Accuracy": 0.0}
+                return {"Accuracy": 1.0 if predicted[i] == gold else 0.0, "Valid": 1}
+        return {"Accuracy": 0.0, "Valid": 0}
 
 
 MMLUAbstractAlgebra                 = lambda tokenizer, split='test', data_limit=-1, max_new_tokens=100, num_shots=0: MMLUDataset(tokenizer, MMLUSubject.abstract_algebra, split=split, data_limit=data_limit, max_new_tokens=max_new_tokens, num_shots=num_shots)
